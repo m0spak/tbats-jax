@@ -80,9 +80,19 @@ jax 0.10, optimistix 0.1, tbats 1.1.3, scikit-learn <1.6.
    For single-series on CPU/GPU use `fit_jax`. For panel fits where
    2.7× CPU speedup matters, or for TPU viability at all, use `fit_lm`.
 
-   **Next refinement (not shipped):** two-phase fit — brief Adam warmup
-   then LM polish, all pure-scan. Likely closes the remaining cold-
-   start gap while staying TPU-compatible.
+   **Tested, didn't help Taylor:** two-phase Adam+LM warmup (`adam_steps`
+   kwarg), and multi-start LM from K alpha/beta seeds
+   (`fit_lm_multistart`). Both are shipped infrastructure (pure scan/vmap,
+   TPU-compatible) but neither closes the Taylor cold-start MAE gap,
+   because all seeds converge toward the same overfit regime where
+   hinge admissibility is too permissive to repel.
+
+   **Real remaining fix (multi-day, research):** express a log-hinge-
+   equivalent barrier in sum-of-squares residual form. Current hinge
+   residual `sqrt(w) * max(0, rho-(1-m))` has zero gradient inside the
+   admissible region; log-hinge would have gradient proportional to
+   1/(1-rho+m). Getting this shape into an LM-compatible r-vector while
+   preserving differentiability is nontrivial.
 
 2. **Bayesian TBATS via NumPyro** (SCAFFOLD SHIPPED, MCMC experimental).
    `tbats_jax.bayes_tbats` and `bayes_forecast` wire NumPyro's NUTS onto

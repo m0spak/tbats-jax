@@ -212,6 +212,18 @@ def test_fit_lm_converges():
     assert np.all(np.isfinite(preds))
 
 
+def test_fit_lm_multistart_runs():
+    """Multi-start LM selects an admissible fit and doesn't crash."""
+    from tbats_jax import fit_lm_multistart
+    spec = TBATSSpec(seasonal=((24.0, 2),), use_trend=True, use_damping=False)
+    rng = np.random.default_rng(29)
+    t = np.arange(400)
+    y = 5.0 + 0.005 * t + 2.0 * np.sin(2 * np.pi * t / 24.0) + rng.normal(0, 0.3, 400)
+    r = fit_lm_multistart(y, spec, n_seeds=3, max_steps=50)
+    assert np.isfinite(r.ssr)
+    assert r.final_rho < 1.01  # admissible by R's criterion
+
+
 def test_fit_scan_runs():
     """Experimental fit_scan should at least run and return finite output.
     Quality gap to fit_jax is documented in fit_scan.py module docstring —

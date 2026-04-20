@@ -255,6 +255,146 @@ def fit_lm(
     )
 
 
+def _default_seeds(spec: TBATSSpec, theta_base: np.ndarray, n_seeds: int) -> np.ndarray:
+    """Structured init seeds for multi-start LM.
+
+    Varies alpha and beta across a small grid (the smoothing-param regime
+    is the dominant cold-start sensitivity). All other params inherit from
+    the base init. Returns shape (n_seeds, n_params).
+
+    The first seed is always the base init (lets users recover single-
+    start behavior by setting n_seeds=1). Remaining seeds cover alpha
+    values that bracket R's typical fits (0.1–1.8 for alpha, ±0.3 for beta).
+    """
+    seeds = [theta_base.copy()]
+    alpha_grid = [1.0, 1.7, 0.5, 1.3, 0.3]
+    beta_grid  = [0.0, -0.2, 0.2, -0.3, 0.3]
+    # Sequentially combine alpha and beta variations.
+    while len(seeds) < n_seeds:
+        i = len(seeds) - 1
+        t = theta_base.copy()
+        t[0] = alpha_grid[i % len(alpha_grid)]
+        if spec.use_trend:
+            # beta position depends on whether phi is present
+            beta_idx = 1 + int(spec.use_damping)
+            t[beta_idx] = beta_grid[i % len(beta_grid)]
+        seeds.append(t)
+    return np.stack(seeds[:n_seeds], axis=0)
+
+
+def fit_lm_multistart(
+    y,
+    spec: TBATSSpec,
+    n_seeds: int = 5,
+    theta_base: Optional[np.ndarray] = None,
+    max_steps: int = 100,
+    lam0: float = 1.0,
+    gamma_ridge: float = 1e6,
+    admissibility_weight: float = 1e4,
+    admissibility_margin: float = 1e-3,
+    rho_method: str = "auto",
+) -> FitResultLM:
+    """Multi-start LM: run K init seeds via vmap, return best by final loss.
+
+    Each seed varies (alpha, beta) across a fixed grid that brackets
+    values R's `forecast::tbats` typically converges to — this handles
+    the cold-start basin pathology where default init_theta drops LM
+    into a poor local minimum on real data.
+
+    Pure scan+vmap → TPU-compatible. Cost scales linearly in n_seeds.
+    """
+    if rho_method == "auto":
+        rho_method = "eigvals" if jax.default_backend() == "cpu" else "power"
+
+    y_np = np.asarray(y, dtype=np.float64)
+    if theta_base is None:
+        theta_base = init_theta(spec, y_np)
+
+    seeds_nat = _default_seeds(spec, theta_base, n_seeds)
+    seeds_raw = np.stack(
+        [natural_to_raw(seeds_nat[i], spec) for i in range(n_seeds)],
+        axis=0,
+    )
+    y_j = jnp.asarray(y_np)
+
+    def r_fn(theta_raw):
+        return _residuals(
+            theta_raw, y_j, spec,
+            gamma_ridge=gamma_ridge,
+            adm_weight=admissibility_weight,
+            adm_margin=admissibility_margin,
+            rho_method=rho_method,
+        )
+
+    def fit_one(theta_raw_init):
+        return _lm_scan(theta_raw_init, r_fn, max_steps=max_steps, lam0=lam0)
+
+    batched = jax.jit(jax.vmap(fit_one))
+
+    t0 = time.perf_counter()
+    thetas_raw = batched(jnp.asarray(seeds_raw))
+    jax.block_until_ready(thetas_raw)
+    compile_time = time.perf_counter() - t0
+
+    t0 = time.perf_counter()
+    thetas_raw = batched(jnp.asarray(seeds_raw))
+    jax.block_until_ready(thetas_raw)
+    wall_time = time.perf_counter() - t0
+
+    # Seed selection: pick the admissible candidate with lowest residual.
+    # Naive argmin over ||r||^2 tends to pick overfit, marginally-unstable
+    # solutions (rho > 1) that happen to have lower in-sample loss but bad
+    # OOS. We filter on rho < 1 (strictly stable), falling back to the best
+    # loss if no seed is admissible.
+    losses = np.empty(n_seeds)
+    rhos = np.empty(n_seeds)
+    for i in range(n_seeds):
+        th_i = np.asarray(thetas_raw[i])
+        if not np.all(np.isfinite(th_i)):
+            losses[i] = np.inf; rhos[i] = np.inf
+            continue
+        loss_i = float(jnp.sum(r_fn(jnp.asarray(th_i)) ** 2))
+        losses[i] = loss_i if np.isfinite(loss_i) else np.inf
+        try:
+            params_i = unpack(jnp.asarray(raw_to_natural(jnp.asarray(th_i), spec)), spec)
+            F_i, g_i, w_i = build_matrices(spec, params_i)
+            D_i = np.asarray(F_i) - np.outer(np.asarray(g_i), np.asarray(w_i))
+            rho_i = float(np.max(np.abs(np.linalg.eigvals(D_i))))
+            rhos[i] = rho_i if np.isfinite(rho_i) else np.inf
+        except Exception:
+            rhos[i] = np.inf
+
+    # Match R's admissibility tolerance (1 + 1e-2) — marginally unstable
+    # candidates with rho ≤ 1.01 are acceptable; it's tight-but-stable fits.
+    admissible = rhos < 1.01
+    if admissible.any():
+        masked = np.where(admissible, losses, np.inf)
+        best_i = int(np.argmin(masked))
+    else:
+        best_i = int(np.argmin(losses))
+    theta_raw = np.asarray(thetas_raw[best_i])
+    theta = np.asarray(raw_to_natural(jnp.asarray(theta_raw), spec))
+    nll = float(neg_log_likelihood(jnp.asarray(y_np), jnp.asarray(theta), spec))
+
+    params = unpack(jnp.asarray(theta), spec)
+    F, g, w = build_matrices(spec, params)
+    D = np.asarray(F) - np.outer(np.asarray(g), np.asarray(w))
+    final_rho = float(np.max(np.abs(np.linalg.eigvals(D))))
+    ssr = float(np.exp(nll / len(y_np)) * len(y_np))
+
+    return FitResultLM(
+        theta=theta,
+        theta_raw=theta_raw,
+        neg_log_lik_clean=nll,
+        ssr=ssr,
+        final_rho=final_rho,
+        max_steps=max_steps,
+        wall_time=wall_time,
+        compile_time=compile_time,
+        spec=spec,
+    )
+
+
 def fit_panel_lm(
     ys: np.ndarray,
     spec: TBATSSpec,

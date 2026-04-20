@@ -4,7 +4,7 @@ from tbats_jax.spec import TBATSSpec
 from tbats_jax.fit import fit
 from tbats_jax.fit_jax import fit_jax, fit_panel, fit_panel_hetero
 from tbats_jax.fit_scan import fit_scan, fit_panel_scan
-from tbats_jax.fit_lm import fit_lm, fit_panel_lm
+from tbats_jax.fit_lm import fit_lm, fit_lm_multistart, fit_panel_lm
 from tbats_jax.auto import auto_fit_jax, auto_fit_jax_cv, AutoResult, AutoCVResult
 # Bayesian path is optional (requires numpyro). Load lazily so a plain
 # `import tbats_jax` doesn't fail when numpyro isn't installed.
@@ -33,6 +33,7 @@ __all__ = [
     "fit_scan",
     "fit_panel_scan",
     "fit_lm",
+    "fit_lm_multistart",
     "fit_panel_lm",
     "auto_fit_jax",
     "auto_fit_jax_cv",
