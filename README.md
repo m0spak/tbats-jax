@@ -16,7 +16,8 @@ extrapolated): **17× warm / 8.5× cold**.
 
 Experimental: scan-based Levenberg-Marquardt fit (`fit_lm`, TPU-compatible
 but lower convergence quality than the main path) and a NumPyro Bayesian
-scaffold (sampler converges poorly on non-trivial priors — see STATUS).
+scaffold (sampler converges poorly on non-trivial priors — see
+[docs/DEV_NOTES.md](docs/DEV_NOTES.md)).
 
 ## Install
 
@@ -378,13 +379,15 @@ The batched likelihood result is the headline: once the optimizer moves
 inside JAX (jaxopt/optimistix), the full fit becomes one fused vmapped
 call — the path to real panel scaling.
 
-## Known limitations (roadmap)
+## Developer notes
 
-- No Box-Cox transform yet (add lambda parameter + Jacobian term to NLL)
-- No ARMA errors (add AR/MA state extension + coefficient parameters)
-- Seed state x0 initialized naively; port OLS warmup from fitTBATS.R
-- Admissibility via soft penalty; could tighten using differentiable
-  reparameterization to guaranteed-stable region
-- No auto-search over k-vector yet (outer discrete loop belongs in Python)
-- vmap over panels is only demonstrated for likelihood eval; full fit
-  batching requires a JAX-native optimizer replacing scipy.optimize
+Current state, known limitations, and the ranked next-steps queue live
+in [docs/DEV_NOTES.md](docs/DEV_NOTES.md). That's the resumption anchor
+for any contributor picking up work.
+
+## Contributing
+
+Issues and PRs welcome at the primary repo on
+[Codeberg](https://codeberg.org/mospak/tbats-jax). The
+[GitHub mirror](https://github.com/m0spak/tbats-jax) is read-only and
+syncs automatically — don't open PRs against it.

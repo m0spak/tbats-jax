@@ -1,7 +1,12 @@
-# Session state — pick up here
+# Developer notes
 
-v0.1.0 **SHIPPED to PyPI** as `tbats-jax`. 24 tests passing. Codeberg
-primary, GitHub mirror live. Working tree clean.
+Living document — current state, measured numbers, known limitations,
+and ranked next-steps queue. User-facing docs live in `README.md` and
+the API docstrings. This file is the resumption anchor for any
+contributor picking up work on this repo.
+
+**Current release:** v0.1.0 shipped to PyPI as `tbats-jax`. 24 tests
+passing. Codeberg primary, GitHub mirror live. Working tree clean.
 
 ## Published artifact
 
