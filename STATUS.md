@@ -7,8 +7,12 @@ normalization). CPU fit quality improved meaningfully (single-series SSR
 Three-way accelerator sweep complete:
 - CPU: works (baseline at 196 ms/series T=1500)
 - T4 GPU: works at small N (1.85× at N=1000), loses at N=5000 (HBM wall)
-- **A100 GPU: headline — 10× over CPU, 17× over R, at N=5000-10000**
-  (per-series 20 ms steady-state, fits 10k TBATS models in 200 s)
+- **A100 GPU: headline — at N=5000-10000, per-series warm time 20 ms.**
+  **Warm** (JIT cached): 10× over CPU, 17× over R sequential — a ~200 s
+  warm wall for 10k series. **Cold** (first call, includes compile):
+  ~406 s total, giving 4.8× over CPU and 8.5× over R. Use warm numbers
+  for production batch retrain; use cold for one-shot scripts.
+  Reproduced on PyPI v0.1.0 install in Colab Pro.
 - v5e-1 TPU: not viable (while_loop compile is prohibitive).
 
 ## Where we are (v0.0.6)

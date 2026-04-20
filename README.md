@@ -8,8 +8,11 @@
 JAX-native port of R's `forecast::tbats`. Innovations-form TBATS with
 multi-seasonal Fourier harmonics, Box-Cox, missing data, and ARMA errors
 — fit via `jax.grad` + optimistix BFGS on CPU or GPU. Ships with `vmap`
-panel fitting that scales to thousands of series in a single call (10×
-over single-core CPU at N=10000 on A100).
+panel fitting that scales to thousands of series in a single call. At
+N=10000, T=1500 on a Colab A100: **~200 s warm fit** (after ~200 s
+one-time JIT compile). Vs single-core CPU JAX (~33 min extrapolated):
+**10× warm / 5× cold**. Vs R `forecast::tbats` sequential (~57 min
+extrapolated): **17× warm / 8.5× cold**.
 
 Experimental: scan-based Levenberg-Marquardt fit (`fit_lm`, TPU-compatible
 but lower convergence quality than the main path) and a NumPyro Bayesian
@@ -243,17 +246,31 @@ bandwidth wall and lost to CPU at N=5000. A100 had the headroom to scale:
 |---|---|---|---|---|
 | **CPU** (Apple Silicon M-series) | 196 ms | 196 ms* | 196 ms* | 196 ms* |
 | **CUDA T4 16 GB** | 104 ms (1.88×) | **214 ms (0.92× — lost)** | — | — |
-| **CUDA A100 40 GB** | **53 ms** | **20 ms** | **20 ms** | 30 ms |
-| vs CPU | 3.7× | **9.9×** | **9.8×** | 6.6× |
-| vs R `forecast::tbats` sequential | 6.5× | **17.3×** | **17.1×** | 11.5× |
+| **CUDA A100 40 GB** (warm ms/ser) | **53 ms** | **20 ms** | **20 ms** | 30 ms |
+| A100 compile (one-time JIT) | 59 s | 106 s | 206 s | 607 s |
+| A100 warm wall | 52 s | 99 s | 200 s | 597 s |
+| A100 warm vs CPU | 3.8× | **9.9×** | **9.8×** | 6.6× |
+| A100 warm vs R `forecast::tbats` seq. | 6.6× | **17.3×** | **17.1×** | 11.5× |
+| A100 **cold** (compile + warm) vs CPU | 1.8× | 4.7× | **4.8×** | 3.3× |
+| A100 **cold** vs R `forecast::tbats` seq. | 3.1× | 8.2× | **8.5×** | 5.8× |
 
 <sub>*CPU at large N is linear-extrapolation from the measured 196 ms/series at N=500.</sub>
 
-**A100 fits 10,000 independent TBATS models in 200 seconds.** Sequential
+**A100 fits 10,000 independent TBATS models in ~200 s warm** (after a
+~200 s one-time JIT compile). Total first-run wall: ~406 s. Sequential
 R `forecast::tbats` on the same workload would take ~57 minutes. CPU
-(single core) takes ~33 minutes. The GPU sweet spot is N=5000–10000 where
-per-series time drops 2.7× from the N=1000 launch-bound regime to the
-steady-state ~20 ms.
+(single core) takes ~33 minutes.
+
+The **warm** numbers assume a long-lived process that reuses the
+compiled panel function (production batch retrain, serving). The
+**cold** numbers reflect one-shot scripts. Both are honest; pick
+whichever matches your workflow.
+
+Sweet spot is N=5000–10000 where per-series time drops 2.7× from the
+N=1000 launch-bound regime to the steady-state ~20 ms. Beyond N≈15000
+compile time starts dominating and the per-series curve turns back up
+(HBM pressure); recommended practice is to chunk larger panels into
+10k-series buckets.
 
 **Why A100 scales where T4 didn't:**
 - **5× HBM bandwidth** (1.6 TB/s vs 320 GB/s) — T4's bandwidth wall hit at
@@ -293,8 +310,9 @@ TPU-friendly compilation.
 - **For moderate panels (N = 500–2000):** T4 (Colab free tier) is enough.
   Expect **~1.7-2× over CPU**, compile ~30 s.
 - **For large hourly panels (N = 1000–10000, T ≈ 1500):** use **A100**
-  (Colab Pro). **Scales to 10× over CPU, 17× over R sequential** at
-  N=5000–10000. Compile 100–200 s, amortizes immediately.
+  (Colab Pro). **Warm runs** scale to ~10× over CPU, ~17× over R at
+  N=5000–10000. Total first-run wall ≈ compile + warm ≈ 2× warm; run
+  the fit repeatedly (or at least twice) to amortize the JIT.
 - **For very large panels (N > 20000):** compile cost and HBM load start
   to degrade per-series time on A100 too. Either chunk the panel, or use
   H100 if available (untested here).
