@@ -70,16 +70,19 @@ jax 0.10, optimistix 0.1, tbats 1.1.3, scikit-learn <1.6.
    only optimizer in the tree that compiles on TPU.**
 
    Taylor real-data: at ms=30, MAE=1334 (vs optimistix 1042, 28% worse).
-   Non-trivial gap driven by hinge vs log-hinge admissibility — LM's
-   sum-of-squares reformulation gave up the log-barrier's tight
-   boundary-kissing behavior. For TPU viability or fast panel fits the
-   trade is worth it; for single-series accuracy on hard data use
-   `fit_jax`.
+   Tuning investigation (admissibility_weight 1e4 → 1e12, lam0 1 → 1e12)
+   closed this to MAE 1177 (13% gap) but not further. **Diagnostic: LM
+   warm-started from fit_jax's optimum converges to MAE 1061 (within 2%)
+   — so LM's trajectory is correct near a good basin. The cold-start
+   problem is finding that basin; LM from the default init_theta drifts
+   into a different local minimum.**
 
-   **Next refinement (not shipped, 1-2 days):** add a trust-region
-   schedule to adaptively reduce `lam` more aggressively, and try a
-   soft-plus approximation to log-hinge that stays sum-of-squares.
-   Likely closes most of the Taylor gap.
+   For single-series on CPU/GPU use `fit_jax`. For panel fits where
+   2.7× CPU speedup matters, or for TPU viability at all, use `fit_lm`.
+
+   **Next refinement (not shipped):** two-phase fit — brief Adam warmup
+   then LM polish, all pure-scan. Likely closes the remaining cold-
+   start gap while staying TPU-compatible.
 
 2. **Bayesian TBATS via NumPyro** (SCAFFOLD SHIPPED, MCMC experimental).
    `tbats_jax.bayes_tbats` and `bayes_forecast` wire NumPyro's NUTS onto
