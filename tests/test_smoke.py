@@ -224,6 +224,39 @@ def test_fit_lm_multistart_runs():
     assert r.final_rho < 1.01  # admissible by R's criterion
 
 
+def test_arma_recovers_coefs():
+    """AR(1) and MA(1) fits should recover injected coefficients within ~15%."""
+    from tbats_jax import fit_jax
+    from tbats_jax.params import unpack
+
+    # AR(1)
+    rng = np.random.default_rng(3)
+    n = 1000
+    t = np.arange(n, dtype=np.float64)
+    e = rng.normal(0, 0.3, n)
+    innov = np.zeros(n); phi_ar = 0.7
+    for i in range(1, n):
+        innov[i] = phi_ar * innov[i-1] + e[i]
+    y = 10 + 0.005*t + 2*np.sin(2*np.pi*t/24) + innov
+
+    spec = TBATSSpec(seasonal=((24.0, 2),), use_trend=True, use_damping=False, p=1)
+    r = fit_jax(y, spec, max_steps=500)
+    ar_fit = float(unpack(jnp.asarray(r.theta), spec).ar[0])
+    assert abs(ar_fit - 0.7) < 0.15, f"AR(1) recovery: got {ar_fit}, true 0.7"
+
+    # MA(1)
+    rng = np.random.default_rng(5)
+    e = rng.normal(0, 0.3, n)
+    innov = np.zeros(n); theta_ma = 0.6
+    for i in range(1, n):
+        innov[i] = e[i] + theta_ma * e[i-1]
+    y = 10 + 0.005*t + 2*np.sin(2*np.pi*t/24) + innov
+    spec_q = TBATSSpec(seasonal=((24.0, 2),), use_trend=True, use_damping=False, q=1)
+    r = fit_jax(y, spec_q, max_steps=500)
+    ma_fit = float(unpack(jnp.asarray(r.theta), spec_q).ma[0])
+    assert abs(ma_fit - 0.6) < 0.15, f"MA(1) recovery: got {ma_fit}, true 0.6"
+
+
 def test_fit_scan_runs():
     """Experimental fit_scan should at least run and return finite output.
     Quality gap to fit_jax is documented in fit_scan.py module docstring —

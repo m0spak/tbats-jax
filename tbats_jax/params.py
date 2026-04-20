@@ -1,7 +1,8 @@
 """Parameter vector packing / unpacking.
 
 Layout (matching forecast::tbats fitTBATS.R ordering):
-  [(lambda), alpha, (phi), (beta), gamma1[1..K], gamma2[1..K], x0[1..state_dim]]
+  [(lambda), alpha, (phi), (beta), gamma1[1..K], gamma2[1..K],
+   (ar[1..p]), (ma[1..q]), x0[1..state_dim]]
 where K = n_gamma = sum of harmonic counts. Optional blocks appear only if
 the spec enables them.
 """
@@ -20,6 +21,8 @@ class Params(NamedTuple):
     beta: jnp.ndarray  # scalar; 0.0 when trend disabled
     gamma1: jnp.ndarray  # shape (n_gamma,)
     gamma2: jnp.ndarray  # shape (n_gamma,)
+    ar: jnp.ndarray      # shape (p,); empty when p=0
+    ma: jnp.ndarray      # shape (q,); empty when q=0
     x0: jnp.ndarray      # shape (state_dim,)
 
 
@@ -41,8 +44,10 @@ def unpack(theta: jnp.ndarray, spec: TBATSSpec) -> Params:
     K = spec.n_gamma
     gamma1 = theta[i:i + K]; i += K
     gamma2 = theta[i:i + K]; i += K
+    ar = theta[i:i + spec.p]; i += spec.p
+    ma = theta[i:i + spec.q]; i += spec.q
     x0 = theta[i:i + spec.state_dim]
-    return Params(box_cox_lambda, alpha, phi, beta, gamma1, gamma2, x0)
+    return Params(box_cox_lambda, alpha, phi, beta, gamma1, gamma2, ar, ma, x0)
 
 
 def init_theta(spec: TBATSSpec, y: np.ndarray) -> np.ndarray:
@@ -57,8 +62,10 @@ def init_theta(spec: TBATSSpec, y: np.ndarray) -> np.ndarray:
         theta.append(0.999)
     if spec.use_trend:
         theta.append(0.05)
-    theta.extend([0.0] * spec.n_gamma)
-    theta.extend([0.0] * spec.n_gamma)
+    theta.extend([0.0] * spec.n_gamma)  # gamma1
+    theta.extend([0.0] * spec.n_gamma)  # gamma2
+    theta.extend([0.01] * spec.p)        # small AR coefs
+    theta.extend([0.01] * spec.q)        # small MA coefs
     x0 = np.zeros(spec.state_dim)
     # Warmup: first 10 finite observations (NaN-robust version of old init).
     y_arr = np.asarray(y, dtype=np.float64)

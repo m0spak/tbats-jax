@@ -1,11 +1,75 @@
-# tbats_jax
+# tbats-jax
 
-Fixed-structure TBATS fit in JAX. A drop-in replacement for the inner
-`fitSpecificTBATS` kernel of `forecast::tbats`, using `lax.scan` for the
-recursion and `jax.grad` + scipy L-BFGS-B in place of numerical
-Nelder-Mead.
+JAX-native port of R's `forecast::tbats`. Innovations-form TBATS with
+multi-seasonal Fourier harmonics, Box-Cox, missing data, and ARMA errors
+— fit via `jax.grad` + optimistix BFGS on CPU or GPU. Ships with `vmap`
+panel fitting that scales to thousands of series in a single call (10×
+over single-core CPU at N=10000 on A100).
 
-**Scope (v0.0.6):**
+Experimental: scan-based Levenberg-Marquardt fit (`fit_lm`, TPU-compatible
+but lower convergence quality than the main path) and a NumPyro Bayesian
+scaffold (sampler converges poorly on non-trivial priors — see STATUS).
+
+## Install
+
+```bash
+pip install tbats-jax                  # core (CPU/GPU)
+pip install "tbats-jax[data]"          # + pyreadr for fetch_taylor (GPL-3 source, never bundled)
+pip install "tbats-jax[bench]"         # + Python `tbats` for comparison
+pip install "tbats-jax[bayes]"         # + numpyro (pins jax<0.10)
+```
+
+## Quickstart
+
+```python
+import jax
+jax.config.update("jax_enable_x64", True)   # recommended for fit quality
+
+import numpy as np
+from tbats_jax import TBATSSpec, fit_jax, forecast
+from tbats_jax.datasets import synthesize_daily
+
+# Daily series with weekly + yearly seasonality (bundled synthetic generator)
+y = synthesize_daily(n=730, seed=0)
+
+spec = TBATSSpec(
+    seasonal=((7.0, 3), (365.25, 5)),       # (period, k_harmonics) each
+    use_trend=True,
+    use_damping=True,
+)
+
+# Fit (~0.5s on CPU, ~0.02s on A100)
+result = fit_jax(y, spec)
+
+# 30-day forecast
+preds = forecast(y, result.theta, spec, horizon=30)
+```
+
+### Batch 1000 series on GPU
+
+```python
+import numpy as np
+from tbats_jax import TBATSSpec, fit_panel
+
+panel = np.stack([make_series(s) for s in range(1000)])  # shape (1000, T)
+spec  = TBATSSpec(seasonal=((24.0, 3), (168.0, 5)), use_trend=True, use_damping=True)
+
+thetas_raw, nlls, compile_t, wall_t = fit_panel(panel, spec)
+# A100 @ T=1500, N=1000: ~25s wall for all 1000 fits
+```
+
+### Auto-select seasonal harmonics
+
+```python
+from tbats_jax import auto_fit_jax_cv
+
+r = auto_fit_jax_cv(y, periods=(7.0, 365.25),
+                   use_trend=True, use_damping=True,
+                   val_size=30)  # walk-forward CV over last 30 points
+# r.spec has the chosen k-vector; r.fit.theta is the final fit
+```
+
+## Scope (v0.1.0)
 - trend (optional), damping (optional), multi-seasonal harmonics
 - Box-Cox transform (optional, `use_box_cox=True`)
 - Missing-data support (NaN values in `y` handled automatically)
@@ -17,7 +81,9 @@ Nelder-Mead.
 - Heterogeneous panel fit across different specs (`fit_panel_hetero`)
 - Auto k-vector search (`auto_fit_jax`) — R-compatible greedy per-period AIC
 - CPU or GPU (JAX device-agnostic); Colab notebook in `notebooks/`
-- Not yet: ARMA errors
+- ARMA errors (`p`, `q` in TBATSSpec)
+- TPU-viable scan-based LM optimizer (`fit_lm`, `fit_lm_multistart`)
+- Experimental Bayesian TBATS via NumPyro (HMC)
 
 ## Layout
 

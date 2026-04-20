@@ -3,14 +3,40 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "tbats_jax"
-version = "0.0.1"
-description = "Fixed-structure TBATS fit in JAX"
-requires-python = ">=3.10,<3.13"
+name = "tbats-jax"
+version = "0.1.0"
+description = "JAX-native TBATS (forecast::tbats port) — multi-seasonal forecasting with vmap panels on CPU/GPU"
+readme = "README.md"
+license = { file = "LICENSE" }
+requires-python = ">=3.10,<3.15"
+authors = [
+  { name = "Andrii Maliarenko", email = "m0spak@icloud.com" },
+]
+keywords = [
+  "time-series", "forecasting", "tbats", "bats",
+  "state-space", "jax", "gpu", "tpu",
+  "seasonal", "panel", "vmap",
+]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Intended Audience :: Science/Research",
+  "Intended Audience :: Developers",
+  "License :: OSI Approved :: MIT License",
+  "Operating System :: OS Independent",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: 3.14",
+  "Topic :: Scientific/Engineering",
+  "Topic :: Scientific/Engineering :: Mathematics",
+]
 dependencies = [
   "jax>=0.4.30",
   "jaxlib>=0.4.30",
   "optimistix>=0.1.0",
+  "optax>=0.2.0",
   "numpy>=1.26",
   "scipy>=1.11",
 ]
@@ -18,9 +44,19 @@ dependencies = [
 [project.optional-dependencies]
 bench = ["tbats>=1.1.3", "matplotlib>=3.8"]
 dev = ["pytest>=8.0"]
+# Real-data fetcher (downloads forecast::taylor from its GPL-3 source —
+# never bundled in the wheel). Required only if you call fetch_taylor().
+data = ["pyreadr>=0.5"]
 # Bayesian path requires numpyro, which currently pins jax<0.10.
 # Install in its own env: pip install "tbats-jax[bayes]"
 bayes = ["numpyro>=0.20", "jax<0.10", "jaxlib<0.10"]
+
+[project.urls]
+Homepage      = "https://codeberg.org/mospak/tbats-jax"
+Documentation = "https://codeberg.org/mospak/tbats-jax#readme"
+Source        = "https://codeberg.org/mospak/tbats-jax"
+Issues        = "https://codeberg.org/mospak/tbats-jax/issues"
+Mirror        = "https://github.com/m0spak/tbats-jax"
 
 [tool.setuptools.packages.find]
 include = ["tbats_jax*"]

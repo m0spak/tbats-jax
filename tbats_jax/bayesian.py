@@ -50,7 +50,9 @@ def _make_params(alpha, phi, beta, gamma1, gamma2, x0) -> Params:
     return Params(
         box_cox_lambda=jnp.array(1.0),
         alpha=alpha, phi=phi, beta=beta,
-        gamma1=gamma1, gamma2=gamma2, x0=x0,
+        gamma1=gamma1, gamma2=gamma2,
+        ar=jnp.zeros(0), ma=jnp.zeros(0),
+        x0=x0,
     )
 
 

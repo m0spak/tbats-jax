@@ -137,8 +137,11 @@ jax 0.10, optimistix 0.1, tbats 1.1.3, scikit-learn <1.6.
 4. **Bayesian TBATS via NumPyro** (~1 day). Wrap kernel, run HMC. No R
    equivalent. Research upside.
 
-5. **ARMA errors** (~1 day). Low priority; R usually drops them via AIC
-   anyway.
+5. ✅ **ARMA errors** — SHIPPED. `p, q` on `TBATSSpec` augments state with
+   companion-form AR/MA lag blocks. Tested: AR(1) on synthetic recovers
+   phi=0.7 → fitted 0.692 (1% error); MA(1) recovers theta=0.6 → fitted
+   0.674. All matrix coupling (alpha*ar in level, beta*ar in trend,
+   gamma*ar in seasonal rows) matches R's makeTBATSFMatrix.
 
 6. **Real-data Box-Cox benchmark** (~1 hr). Real utility of Box-Cox likely
    shows on genuinely multiplicative series (retail demand, traffic).

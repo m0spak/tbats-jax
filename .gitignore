@@ -21,6 +21,10 @@ venv/
 /tbats_jax_colab.zip
 ../tbats_jax_colab.zip
 
+# Build artifacts
+/dist/
+/build/
+
 # Editors / IDEs
 .vscode/
 .idea/

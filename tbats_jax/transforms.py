@@ -59,6 +59,8 @@ def raw_to_natural(theta_raw: jnp.ndarray, spec: TBATSSpec) -> jnp.ndarray:
     K = spec.n_gamma
     out.append(theta_raw[i:i + K]); i += K                                    # gamma1
     out.append(theta_raw[i:i + K]); i += K                                    # gamma2
+    out.append(theta_raw[i:i + spec.p]); i += spec.p                          # ar
+    out.append(theta_raw[i:i + spec.q]); i += spec.q                          # ma
     out.append(theta_raw[i:i + spec.state_dim])                               # x0
     return jnp.concatenate(out)
 
@@ -77,5 +79,7 @@ def natural_to_raw(theta: np.ndarray, spec: TBATSSpec) -> np.ndarray:
     K = spec.n_gamma
     out.extend(theta[i:i + K].tolist()); i += K
     out.extend(theta[i:i + K].tolist()); i += K
+    out.extend(theta[i:i + spec.p].tolist()); i += spec.p
+    out.extend(theta[i:i + spec.q].tolist()); i += spec.q
     out.extend(theta[i:i + spec.state_dim].tolist())
     return np.asarray(out, dtype=np.float64)
