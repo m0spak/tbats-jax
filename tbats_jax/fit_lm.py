@@ -38,6 +38,14 @@ LM loop (pure scan — no while_loop):
 Status: experimental but TPU-friendly by construction. Quality comparable
 to optimistix on sum-of-squares objectives; may need tuning for very
 hard non-convex landscapes.
+
+Cold-start observation: on real-world series with complex local-minima
+structure (e.g., forecast::taylor), LM's cold init from `init_theta`
+lands in a different local basin than optimistix's BFGS. Warm-starting
+from an `fit_jax` solution converges cleanly to within 2%. An optional
+`adam_steps` / `adam_lr` knob runs Adam in scan before LM kicks in —
+available but didn't close the gap in our Taylor tests. Multi-start or
+data-driven init are the real fixes (future work).
 """
 
 import time
@@ -55,6 +63,12 @@ from tbats_jax.matrices import build_matrices
 from tbats_jax.kernel import tbats_scan, neg_log_likelihood
 from tbats_jax.admissibility import _spectral_radius_eigvals, _spectral_radius_power_iter
 from tbats_jax.transforms import raw_to_natural, natural_to_raw
+
+try:
+    import optax
+    _HAVE_OPTAX = True
+except ImportError:
+    _HAVE_OPTAX = False
 
 
 @dataclass
@@ -134,6 +148,24 @@ def _lm_scan(theta0, r_fn, max_steps, lam0=1.0):
     return theta_final
 
 
+def _adam_scan(theta0, grad_fn, n_steps, lr):
+    """Pure-scan Adam warmup. Finds a good basin before LM polish."""
+    if not _HAVE_OPTAX:
+        raise ImportError("optax is required for two-phase LM (adam_steps>0)")
+    tx = optax.adam(learning_rate=lr)
+    state = tx.init(theta0)
+
+    def step(carry, _):
+        theta, state = carry
+        g = grad_fn(theta)
+        updates, state = tx.update(g, state, theta)
+        theta = optax.apply_updates(theta, updates)
+        return (theta, state), None
+
+    (theta_final, _), _ = lax.scan(step, (theta0, state), None, length=n_steps)
+    return theta_final
+
+
 def fit_lm(
     y,
     spec: TBATSSpec,
@@ -144,6 +176,8 @@ def fit_lm(
     admissibility_weight: float = 1e4,
     admissibility_margin: float = 1e-3,
     rho_method: str = "auto",
+    adam_steps: int = 0,
+    adam_lr: float = 1e-2,
 ) -> FitResultLM:
     """LM fit using a scan-based Marquardt adaptation.
 
@@ -173,9 +207,19 @@ def fit_lm(
             rho_method=rho_method,
         )
 
+    # Objective function for Adam phase: 0.5 * ||r||^2 (same as LM target).
+    def loss_fn(theta_raw):
+        r = r_fn(theta_raw)
+        return 0.5 * jnp.sum(r ** 2)
+
+    grad_fn = jax.grad(loss_fn)
+
     @jax.jit
     def run(theta_raw_init):
-        return _lm_scan(theta_raw_init, r_fn, max_steps=max_steps, lam0=lam0)
+        th = theta_raw_init
+        if adam_steps > 0:
+            th = _adam_scan(th, grad_fn, n_steps=adam_steps, lr=adam_lr)
+        return _lm_scan(th, r_fn, max_steps=max_steps, lam0=lam0)
 
     t0 = time.perf_counter()
     x = run(jnp.asarray(theta_raw0))
