@@ -1,5 +1,10 @@
 # tbats-jax
 
+[![PyPI](https://img.shields.io/pypi/v/tbats-jax.svg)](https://pypi.org/project/tbats-jax/)
+[![Python](https://img.shields.io/pypi/pyversions/tbats-jax.svg)](https://pypi.org/project/tbats-jax/)
+[![License](https://img.shields.io/pypi/l/tbats-jax.svg)](https://codeberg.org/mospak/tbats-jax/src/branch/main/LICENSE)
+[![Source — Codeberg](https://img.shields.io/badge/source-codeberg-blue.svg)](https://codeberg.org/mospak/tbats-jax)
+
 JAX-native port of R's `forecast::tbats`. Innovations-form TBATS with
 multi-seasonal Fourier harmonics, Box-Cox, missing data, and ARMA errors
 — fit via `jax.grad` + optimistix BFGS on CPU or GPU. Ships with `vmap`
