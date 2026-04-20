@@ -63,10 +63,27 @@ jax 0.10, optimistix 0.1, tbats 1.1.3, scikit-learn <1.6.
    **Current recommendation in README:** use GPU (T4 / A100), not TPU,
    until jaxopt integration lands.
 
-2. **Auto-search quality improvement** (~0.5 day). AIC doesn't track MAE
-   well on taylor (even R's auto lands at MAE=1273 vs 1030 at fixed
-   k=(3,5)). Consider time-series CV-based selection instead of AIC, or
-   AIC with a stricter param-count penalty.
+2. **Auto-search quality improvement** (SHIPPED for synthetic; partial on
+   real data). Added `auto_fit_jax_cv()` — greedy-per-period search ranked
+   by held-out-tail MAE instead of AIC, with a multi-start `starts="multi"`
+   option that tries {max_k, max_k/4, (3,3,...), (5,5,...), ones} as seeds.
+
+   Synthetic (periods=24,168, true k≈(3,5), n=1500):
+   - AIC auto:    k=(10,6) → test MAE 6.03
+   - CV multi:    k=(3,3)  → test MAE **0.44** (matches manual reference)
+
+   Taylor (periods=48,336):
+   - AIC auto:    k=(21,6) → test MAE 3467
+   - CV greedy:   k=(23,6) → test MAE 3607
+   - CV multi:    k=(5,4)  → val MAE 1038 (great) but test MAE 4555 (bad)
+     — on Taylor the per-candidate optimizer convergence is noisy, so
+     CV ranking sometimes picks a fit that generalizes poorly to the
+     test window. Optimization quality (not the ranking criterion) is
+     the remaining bottleneck.
+
+   Bottom line: CV-multi helps significantly on well-conditioned data;
+   on Taylor-like hard cases, manual k + direct `fit_jax` is still the
+   safer bet.
 
 3. **Two-pass fit protocol** (~3 hrs). R calls `fitSpecificTBATS` twice;
    pass-2 starts from pass-1 optimum. Marginal SSR gain.

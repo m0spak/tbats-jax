@@ -111,6 +111,21 @@ def test_auto_fit_converges():
     assert res.n_candidates_tried >= 1
 
 
+def test_auto_fit_cv_runs():
+    """auto_fit_jax_cv returns a valid result — smoke check only."""
+    from tbats_jax import auto_fit_jax_cv
+    rng = np.random.default_rng(19)
+    n, period = 400, 24
+    t = np.arange(n)
+    y = 5.0 + 0.005 * t + 2.0 * np.sin(2 * np.pi * t / period) + rng.normal(0, 0.3, n)
+    res = auto_fit_jax_cv(y, periods=(float(period),),
+                          use_trend=True, use_damping=False,
+                          val_size=50, max_steps=100)
+    assert 1 <= res.k_vector[0] <= 11
+    assert np.isfinite(res.val_mae)
+    assert res.n_candidates_tried >= 1
+
+
 def test_heterogeneous_panel():
     """Mix two specs, different lengths; fit_panel_hetero returns per-series theta."""
     from tbats_jax import fit_panel_hetero
