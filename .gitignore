@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+*.egg
+.pytest_cache/
+
+# venv
+.venv/
+venv/
+
+# Platform
+.DS_Store
+
+# Fetched benchmark data (regenerated via benchmarks/fetch_real_data.R)
+/data/*.csv
+/data/*.json
+
+# Colab artifact — rebuilt via `zip -rq tbats_jax_colab.zip tbats_jax/ ...`
+/tbats_jax_colab.zip
+../tbats_jax_colab.zip
+
+# Editors / IDEs
+.vscode/
+.idea/
+
+# JAX persistent compilation cache (if enabled)
+.jax_cache/
