@@ -18,6 +18,9 @@ dependencies = [
 [project.optional-dependencies]
 bench = ["tbats>=1.1.3", "matplotlib>=3.8"]
 dev = ["pytest>=8.0"]
+# Bayesian path requires numpyro, which currently pins jax<0.10.
+# Install in its own env: pip install "tbats-jax[bayes]"
+bayes = ["numpyro>=0.20", "jax<0.10", "jaxlib<0.10"]
 
 [tool.setuptools.packages.find]
 include = ["tbats_jax*"]

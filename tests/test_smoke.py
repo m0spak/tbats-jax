@@ -169,6 +169,33 @@ def test_missing_data_tolerated():
     assert np.all(np.isfinite(preds))
 
 
+def test_bayes_tbats_runs():
+    """Bayesian TBATS smoke check: small MCMC run + posterior forecast.
+    Skips if numpyro not installed (optional dependency).
+    """
+    pytest = __import__("pytest")
+    try:
+        import numpyro  # noqa: F401
+    except ImportError:
+        pytest.skip("numpyro not installed")
+    from tbats_jax import bayes_tbats, bayes_forecast
+
+    spec = TBATSSpec(seasonal=((12.0, 2),), use_trend=True, use_damping=False)
+    rng = np.random.default_rng(101)
+    t = np.arange(150)
+    y = 3.0 + 0.01 * t + 1.0 * np.sin(2 * np.pi * t / 12.0) + rng.normal(0, 0.3, 150)
+    # Tiny MCMC run — fast, just checks end-to-end wiring.
+    res = bayes_tbats(y, spec, num_warmup=50, num_samples=50, num_chains=1)
+    assert "alpha" in res.samples
+    assert res.samples["alpha"].shape == (50,)
+    assert res.samples["sigma"].shape == (50,)
+    assert res.samples["x0_rest"].shape == (50, spec.state_dim - 1)
+    # Forecast 12 steps from 20 posterior paths
+    preds = bayes_forecast(res, y, horizon=12, n_paths=20)
+    assert preds.shape == (20, 12)
+    assert np.all(np.isfinite(preds))
+
+
 def test_fit_scan_runs():
     """Experimental fit_scan should at least run and return finite output.
     Quality gap to fit_jax is documented in fit_scan.py module docstring —

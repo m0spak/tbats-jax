@@ -63,7 +63,22 @@ jax 0.10, optimistix 0.1, tbats 1.1.3, scikit-learn <1.6.
    **Current recommendation in README:** use GPU (T4 / A100), not TPU,
    until jaxopt integration lands.
 
-2. **Auto-search quality improvement** (SHIPPED for synthetic; partial on
+2. **Bayesian TBATS via NumPyro** (SCAFFOLD SHIPPED, MCMC experimental).
+   `tbats_jax.bayes_tbats` and `bayes_forecast` wire NumPyro's NUTS onto
+   the same kernel fit_jax uses. End-to-end shapes (priors, posterior,
+   predictive draws) are correct and the smoke test passes.
+
+   **Known limitation:** NUTS step-size adaptation collapses to ~1e-45
+   when the chain approaches the log-hinge admissibility barrier (which
+   has infinite curvature at rho=1). Posterior samples on non-trivial
+   problems are stuck. Clean fixes (structural admissibility
+   parameterization, non-centered priors, SVI) are multi-day; deferred.
+
+   Value today: anyone wanting to explore Bayesian TBATS on a JAX stack
+   has a starting point with correct wiring. Ready for the next engineer
+   with NumPyro expertise to tune priors / reparameterize.
+
+3. **Auto-search quality improvement** (SHIPPED for synthetic; partial on
    real data). Added `auto_fit_jax_cv()` — greedy-per-period search ranked
    by held-out-tail MAE instead of AIC, with a multi-start `starts="multi"`
    option that tries {max_k, max_k/4, (3,3,...), (5,5,...), ones} as seeds.
