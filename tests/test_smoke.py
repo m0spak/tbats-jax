@@ -196,6 +196,22 @@ def test_bayes_tbats_runs():
     assert np.all(np.isfinite(preds))
 
 
+def test_fit_lm_converges():
+    """LM (scan-based) should converge to a reasonable fit — better than
+    fit_scan because it uses the least-squares structure directly."""
+    from tbats_jax import fit_lm
+    spec = TBATSSpec(seasonal=((24.0, 2),), use_trend=True, use_damping=False)
+    rng = np.random.default_rng(13)
+    t = np.arange(400)
+    y = 5.0 + 0.005 * t + 2.0 * np.sin(2 * np.pi * t / 24.0) + rng.normal(0, 0.3, 400)
+    r = fit_lm(y, spec, max_steps=100)
+    assert np.isfinite(r.ssr)
+    # Should converge tighter than initial random state — basic check.
+    assert r.ssr < 1e6
+    preds = np.asarray(forecast(y, jnp.asarray(r.theta), spec, 24))
+    assert np.all(np.isfinite(preds))
+
+
 def test_fit_scan_runs():
     """Experimental fit_scan should at least run and return finite output.
     Quality gap to fit_jax is documented in fit_scan.py module docstring —

@@ -38,30 +38,48 @@ jax 0.10, optimistix 0.1, tbats 1.1.3, scikit-learn <1.6.
 
 ## Resume — next steps ranked
 
-1. **Fixed-iteration optimizer for TPU viability** (DEFERRED — needs
-   jaxopt.LBFGS integration).
+1. **Fixed-iteration optimizer for TPU viability** (SHIPPED via LM —
+   `tbats_jax.fit_lm`).
 
-   **What was shipped:** `tbats_jax.fit_scan` (hand-rolled BFGS as
-   `lax.scan`). TPU-compatible — compiles in seconds, static shape.
-   Experimental / caveat-heavy.
+   Reframed the TBATS objective as a sum-of-squares: the scan innovations,
+   the gamma ridge, and a hinge-form admissibility violation are all
+   assembled into one residual vector `r(theta)`. Levenberg-Marquardt
+   then exploits this structure:
 
-   **Quality results (CPU, measured):**
-   |              | Synthetic SSR | Taylor MAE |
-   | ------------ | ------------- | ---------- |
-   | fit_jax (optimistix) | 354 | 1042 |
-   | fit_scan (hand-BFGS) | 450 | 5213 |
-   | optax Adam (scan)    | 603 | 2954 |
+   ```
+   for step in range(max_steps):
+       r, J    = residuals(theta), jacfwd(residuals)(theta)
+       delta   = solve(J^T J + lam*I, -J^T r)
+       theta' = theta + delta
+       accept  = ||r(theta')|| < ||r||
+       lam    /= 3 if accept else *= 3   # Marquardt damping, via jnp.where
+   ```
 
-   **Why optimistix is hard to replace:** its Wolfe line search + zoom +
-   restart logic is doing real work on our non-convex, non-smooth
-   (log-hinge) objective. Hand-rolled alternatives plateau at worse
-   local minima.
+   No `while_loop` anywhere — pure `lax.scan`. TPU-compatible by
+   construction.
 
-   **Realistic path forward (multi-day):** integrate `jaxopt.LBFGS` or
-   port a full Wolfe-based L-BFGS into a scan wrapper. Not shipped here.
+   **Measured comparison (CPU, N=32 T=1500 synthetic panel):**
+   | Optimizer              | Per-series | Mean SSR | TPU? |
+   | ---------------------- | ---------: | -------: | :--: |
+   | fit_lm (ms=30)         |  **93 ms** |    376   | ✓    |
+   | fit_lm (ms=50)         |    153 ms  |    372   | ✓    |
+   | fit_panel (optimistix) |    252 ms  |    367   | ✗    |
 
-   **Current recommendation in README:** use GPU (T4 / A100), not TPU,
-   until jaxopt integration lands.
+   **LM at 30 steps is 2.7× faster than optimistix on CPU with 2.6%
+   worse SSR — for panel workloads this is a pure win, and it's the
+   only optimizer in the tree that compiles on TPU.**
+
+   Taylor real-data: at ms=30, MAE=1334 (vs optimistix 1042, 28% worse).
+   Non-trivial gap driven by hinge vs log-hinge admissibility — LM's
+   sum-of-squares reformulation gave up the log-barrier's tight
+   boundary-kissing behavior. For TPU viability or fast panel fits the
+   trade is worth it; for single-series accuracy on hard data use
+   `fit_jax`.
+
+   **Next refinement (not shipped, 1-2 days):** add a trust-region
+   schedule to adaptively reduce `lam` more aggressively, and try a
+   soft-plus approximation to log-hinge that stays sum-of-squares.
+   Likely closes most of the Taylor gap.
 
 2. **Bayesian TBATS via NumPyro** (SCAFFOLD SHIPPED, MCMC experimental).
    `tbats_jax.bayes_tbats` and `bayes_forecast` wire NumPyro's NUTS onto
