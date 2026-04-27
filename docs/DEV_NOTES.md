@@ -62,39 +62,44 @@ f9f1c15  auto_fit_jax_cv: CV + multi-start
 
 ## Tech debt / known limitations (NOT blockers)
 
-1. **fit_lm Taylor cold-start MAE is 1334 vs fit_jax 1042** (28% worse).
-   LM iterates correctly near a good basin (warm-start from fit_jax
-   converges to 2% gap). The cold-init path drops into a different local
-   minimum. Fix needs a log-hinge-equivalent residual (`sqrt(-log(1-rho+m))`)
-   expressed as sum-of-squares — nontrivial math, deferred.
-
-2. **Bayesian NUTS step-size collapses** to ~1e-45 on non-trivial priors.
+1. **Bayesian NUTS step-size collapses** to ~1e-45 on non-trivial priors.
    `bayesian.py` is scaffold-only; known issue documented. Real fix needs
    structural admissibility reparameterization or switch to SVI.
 
-3. **Auto k-search is noisy on real data.** AIC picks wrong on Taylor;
+2. **Auto k-search is noisy on real data.** AIC picks wrong on Taylor;
    CV+multi-start helps on synthetic but not consistently on hard cases.
    Working as designed; problem is the TBATS loss landscape itself.
 
-4. **`tbats_jax/seed_state.py`** — experimental OLS warmup, kept but not
-   on any default path.
+3. **OLS init is asymmetric across optimizers.** `fit_lm` defaults to
+   `init_method='ols'` and benefits dramatically (~60% MAE reduction on
+   Taylor cold-start). `fit_jax` (BFGS) does NOT — empirically OLS init
+   makes BFGS worse on Taylor (1042 → 1499). Don't reflexively apply OLS
+   to fit_jax; the asymmetry is real (LM converges within a basin, BFGS
+   does basin-finding too — they need different starts). Diagnostic:
+   `python -m benchmarks.diag_init_quality`.
+
+## v0.1.1 changelog (unreleased)
+
+- **JIT cache lift in `fit_jax` and `fit_panel`** (commit `5a254b7`):
+  module-level `lru_cache` factories so repeat calls with the same
+  spec/shape skip recompile. Saves ~200 s per cache hit on Colab A100.
+- **OLS seed-state init by default for `fit_lm` / `fit_lm_multistart`**
+  (this commit): closes Taylor cold-start MAE from ~2800 to ~1120.
+  Mirrors `fitTBATS.R:327-368`. Opt out via `init_method='naive'`.
 
 ## Resume — next steps ranked
 
-1. **Log-hinge residual for fit_lm** (multi-day research). Would close
-   the Taylor 28% MAE gap AND keep TPU-compatibility. Two forms to try:
-   soft-plus approximation, or Taylor-expansion of log-barrier.
-
-2. **Bayesian reparameterization** (multi-day). Replace the log-hinge
+1. **Bayesian reparameterization** (multi-day). Replace the log-hinge
    admissibility barrier with a structural parameterization that
    guarantees `ρ(D) < 1`. Unblocks NUTS sampling on real problems.
 
-3. **PyPI housekeeping** (10 min): narrow the upload token scope to
+2. **PyPI housekeeping** (10 min): narrow the upload token scope to
    project-only at <https://pypi.org/manage/account/token/>; set up
    `~/.pypirc` for no-prompt future releases.
 
-4. **v0.1.1 polish** (~1 day): bundle the fit_lm log-hinge fix if done,
-   address any user-filed issues, bump version.
+3. **Cut v0.1.1** (~30 min): bump pyproject to 0.1.1, build, TestPyPI
+   smoke test, real PyPI upload. Two real fixes already bundled (JIT
+   cache + OLS init). Tag `v0.1.1` after PyPI publish.
 
 ## Quick resume commands
 

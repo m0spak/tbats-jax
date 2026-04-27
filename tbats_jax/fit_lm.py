@@ -39,13 +39,14 @@ Status: experimental but TPU-friendly by construction. Quality comparable
 to optimistix on sum-of-squares objectives; may need tuning for very
 hard non-convex landscapes.
 
-Cold-start observation: on real-world series with complex local-minima
-structure (e.g., forecast::taylor), LM's cold init from `init_theta`
-lands in a different local basin than optimistix's BFGS. Warm-starting
-from an `fit_jax` solution converges cleanly to within 2%. An optional
-`adam_steps` / `adam_lr` knob runs Adam in scan before LM kicks in —
-available but didn't close the gap in our Taylor tests. Multi-start or
-data-driven init are the real fixes (future work).
+Cold-start: as of v0.1.1, the default `init_method='ols'` runs the
+R-style OLS seed-state fit (mirrors fitTBATS.R:327-368) before LM
+kicks in. On Taylor real data this drops cold-start MAE from ~2800
+to ~1120, closing the gap to BFGS / R reference. The `adam_steps` /
+`adam_lr` knobs and multi-start path are kept as additional tools
+but are no longer needed to overcome the basin pathology in the
+default case. Pass `init_method='naive'` to recover the pre-OLS
+behavior for diagnostics.
 """
 
 import time
@@ -63,6 +64,7 @@ from tbats_jax.matrices import build_matrices
 from tbats_jax.kernel import tbats_scan, neg_log_likelihood
 from tbats_jax.admissibility import _spectral_radius_eigvals, _spectral_radius_power_iter
 from tbats_jax.transforms import raw_to_natural, natural_to_raw
+from tbats_jax.seed_state import with_ols_x0
 
 try:
     import optax
@@ -178,6 +180,7 @@ def fit_lm(
     rho_method: str = "auto",
     adam_steps: int = 0,
     adam_lr: float = 1e-2,
+    init_method: str = "ols",
 ) -> FitResultLM:
     """LM fit using a scan-based Marquardt adaptation.
 
@@ -188,6 +191,14 @@ def fit_lm(
     Defaults: lam0=1.0 starts mildly damped; accept → halve, reject →
     triple (Marquardt's original rule). max_steps=200 is usually plenty
     because LM converges quadratically when close to a minimum.
+
+    `init_method`: when `theta0 is None`, controls the seed-state x0:
+      - 'ols' (default) — OLS fit of x0 against the residual stream under
+        zero seed state, mirroring forecast::fitTBATS R lines 327-368.
+        Drops Taylor cold-start MAE from ~2800 to ~1120 (close to BFGS
+        and R parity). Required for hinge-LM to find a good basin.
+      - 'naive' — the simple `mean(y[:10])` x0 from `init_theta`. Kept
+        for diagnostics; not recommended for cold-start on real data.
     """
     if rho_method == "auto":
         rho_method = "eigvals" if jax.default_backend() == "cpu" else "power"
@@ -195,6 +206,10 @@ def fit_lm(
     y_np = np.asarray(y, dtype=np.float64)
     if theta0 is None:
         theta0 = init_theta(spec, y_np)
+        if init_method == "ols":
+            theta0 = with_ols_x0(theta0, y_np, spec)
+        elif init_method != "naive":
+            raise ValueError(f"init_method must be 'ols' or 'naive', got {init_method!r}")
     theta_raw0 = natural_to_raw(theta0, spec)
     y_j = jnp.asarray(y_np)
 
@@ -293,15 +308,18 @@ def fit_lm_multistart(
     admissibility_weight: float = 1e4,
     admissibility_margin: float = 1e-3,
     rho_method: str = "auto",
+    init_method: str = "ols",
 ) -> FitResultLM:
     """Multi-start LM: run K init seeds via vmap, return best by final loss.
 
     Each seed varies (alpha, beta) across a fixed grid that brackets
-    values R's `forecast::tbats` typically converges to — this handles
-    the cold-start basin pathology where default init_theta drops LM
-    into a poor local minimum on real data.
+    values R's `forecast::tbats` typically converges to. With OLS init
+    (now default) the cold-start basin pathology is largely already
+    addressed, so multistart mostly serves as an extra safety net.
 
     Pure scan+vmap → TPU-compatible. Cost scales linearly in n_seeds.
+
+    `init_method` mirrors `fit_lm`: 'ols' (default) or 'naive'.
     """
     if rho_method == "auto":
         rho_method = "eigvals" if jax.default_backend() == "cpu" else "power"
@@ -309,6 +327,10 @@ def fit_lm_multistart(
     y_np = np.asarray(y, dtype=np.float64)
     if theta_base is None:
         theta_base = init_theta(spec, y_np)
+        if init_method == "ols":
+            theta_base = with_ols_x0(theta_base, y_np, spec)
+        elif init_method != "naive":
+            raise ValueError(f"init_method must be 'ols' or 'naive', got {init_method!r}")
 
     seeds_nat = _default_seeds(spec, theta_base, n_seeds)
     seeds_raw = np.stack(

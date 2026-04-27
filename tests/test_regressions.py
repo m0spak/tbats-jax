@@ -31,7 +31,7 @@ import jax
 import jax.numpy as jnp
 import pytest
 
-from tbats_jax import TBATSSpec, fit, fit_jax, fit_panel, forecast
+from tbats_jax import TBATSSpec, fit, fit_jax, fit_lm, fit_panel, forecast
 from tbats_jax.fit_jax import _build_panel_fit, _build_single_fit
 from tbats_jax.kernel import neg_log_likelihood
 from tbats_jax.transforms import raw_to_natural
@@ -142,6 +142,33 @@ def test_taylor_regression_guard():
     pred = np.asarray(forecast(y_tr, jnp.asarray(r.theta), spec, h))
     mae = float(np.mean(np.abs(y_te - pred)))
     assert mae < 1100, f"Taylor MAE regression: {mae:.1f} (budget 1100)"
+
+
+@pytest.mark.skipif(
+    not _TAYLOR_CSV.exists(),
+    reason="taylor.csv not fetched — run `Rscript benchmarks/fetch_real_data.R data` first"
+)
+def test_taylor_fit_lm_cold_start_with_ols_init():
+    """Pins the cold-start fit_lm Taylor MAE under the new OLS-default init.
+    Pre-OLS the cold-start MAE was ~2800; with OLS it converges to ~1120,
+    within ~8% of fit_jax/R reference. Budget 1200 to tolerate scan-step
+    jitter across code changes.
+    """
+    y = np.loadtxt(_TAYLOR_CSV)
+    h = 336
+    y_tr, y_te = y[:-h], y[-h:]
+    spec = TBATSSpec(
+        seasonal=((48.0, 3), (336.0, 5)),
+        use_trend=True,
+        use_damping=True,
+    )
+    r = fit_lm(y_tr, spec, max_steps=200)  # default init_method='ols'
+    pred = np.asarray(forecast(y_tr, jnp.asarray(r.theta), spec, h))
+    mae = float(np.mean(np.abs(y_te - pred)))
+    assert mae < 1200, (
+        f"Taylor cold-start fit_lm MAE regression: {mae:.1f} (budget 1200). "
+        f"If this fails, OLS init may have stopped landing in the good basin."
+    )
 
 
 def test_fit_panel_jit_cache_hit():
