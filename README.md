@@ -25,7 +25,7 @@ scaffold (sampler converges poorly on non-trivial priors — see
 pip install tbats-jax                  # core (CPU/GPU)
 pip install "tbats-jax[data]"          # + pyreadr for fetch_taylor (GPL-3 source, never bundled)
 pip install "tbats-jax[bench]"         # + Python `tbats` for comparison
-pip install "tbats-jax[bayes]"         # + numpyro (pins jax<0.10)
+pip install "tbats-jax[bayes]"         # + numpyro (svi_tbats / bayes_tbats)
 ```
 
 ## Quickstart
@@ -109,8 +109,7 @@ tbats_jax/
 │   ├── data.py
 │   ├── bench_single.py # JAX vs Python `tbats` package
 │   └── bench_panel_full.py  # vmap vs R sequential
-├── tests/test_smoke.py
-└── requirements.txt
+└── tests/test_smoke.py
 ```
 
 ## Setup
@@ -119,9 +118,14 @@ tbats_jax/
 cd tbats_jax
 python3.12 -m venv .venv
 source .venv/bin/activate
-pip install -r requirements.txt
-pip install -e .
+pip install -e ".[dev,bench,bayes]"
 ```
+
+`pyproject.toml` is the single source of truth for deps. Extras let
+end users install only what they need — `[dev]` for tests,
+`[bench]` for `bench_single.py`'s comparison against Skorupa's Python
+`tbats`, `[bayes]` for `bayes_tbats` / `svi_tbats`. Add `[data]` if
+you need the Python `fetch_taylor()` wrapper.
 
 ## Run
 
