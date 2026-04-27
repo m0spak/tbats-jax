@@ -62,9 +62,12 @@ f9f1c15  auto_fit_jax_cv: CV + multi-start
 
 ## Tech debt / known limitations (NOT blockers)
 
-1. **Bayesian NUTS step-size collapses** to ~1e-45 on non-trivial priors.
-   `bayesian.py` is scaffold-only; known issue documented. Real fix needs
-   structural admissibility reparameterization or switch to SVI.
+1. **NUTS still collapses on hard problems.** `bayes_tbats` (HMC) is kept
+   as-is — works on small/well-separated problems but step-size collapses
+   to ~1e-45 when the chain brushes the log-hinge barrier. Use
+   `svi_tbats` instead for real Bayesian work; NUTS reparameterization
+   is no longer a research priority since SVI gives working approximate
+   inference. See module docstring in `bayesian.py`.
 
 2. **Auto k-search is noisy on real data.** AIC picks wrong on Taylor;
    CV+multi-start helps on synthetic but not consistently on hard cases.
@@ -78,28 +81,42 @@ f9f1c15  auto_fit_jax_cv: CV + multi-start
    does basin-finding too — they need different starts). Diagnostic:
    `python -m benchmarks.diag_init_quality`.
 
+4. **SVI guide init must be `init_to_median`.** NumPyro's default
+   `init_to_uniform` lands the latent state in regions where ρ(D) > 1,
+   the forward scan diverges (residuals 1e80+), and ELBO stalls at 1e150
+   while gradients are dominated by divergence noise. `init_to_median`
+   uses the prior median which is deliberately tight around admissible
+   region. Hardcoded in `svi_tbats`; do not change without re-validating.
+
 ## v0.1.1 changelog (unreleased)
 
 - **JIT cache lift in `fit_jax` and `fit_panel`** (commit `5a254b7`):
   module-level `lru_cache` factories so repeat calls with the same
   spec/shape skip recompile. Saves ~200 s per cache hit on Colab A100.
 - **OLS seed-state init by default for `fit_lm` / `fit_lm_multistart`**
-  (this commit): closes Taylor cold-start MAE from ~2800 to ~1120.
+  (commit `a3ac2e0`): closes Taylor cold-start MAE from ~2800 to ~1120.
   Mirrors `fitTBATS.R:327-368`. Opt out via `init_method='naive'`.
+- **`svi_tbats` — variational Bayesian path** (this commit): drop-in
+  replacement for `bayes_tbats` on hard problems where NUTS collapses.
+  Uses NumPyro `AutoNormal` (mean-field) or `AutoMultivariateNormal`
+  (full-rank). On a T=500 dual-seasonal problem: NUTS posterior collapsed
+  (alpha std=0), SVI gave a real posterior (alpha std=0.10) in 3.4 s.
+  Same `BayesResult` so `bayes_forecast` works unchanged.
 
 ## Resume — next steps ranked
 
-1. **Bayesian reparameterization** (multi-day). Replace the log-hinge
-   admissibility barrier with a structural parameterization that
-   guarantees `ρ(D) < 1`. Unblocks NUTS sampling on real problems.
-
-2. **PyPI housekeeping** (10 min): narrow the upload token scope to
+1. **PyPI housekeeping**: narrow the upload token scope to
    project-only at <https://pypi.org/manage/account/token/>; set up
    `~/.pypirc` for no-prompt future releases.
 
-3. **Cut v0.1.1** (~30 min): bump pyproject to 0.1.1, build, TestPyPI
-   smoke test, real PyPI upload. Two real fixes already bundled (JIT
-   cache + OLS init). Tag `v0.1.1` after PyPI publish.
+2. **Cut v0.1.1**: bump pyproject to 0.1.1, build, TestPyPI
+   smoke test, real PyPI upload. Three real fixes bundled (JIT cache +
+   OLS init + SVI). Tag `v0.1.1` after PyPI publish.
+
+3. **(future) MLE-warm-started SVI**: optionally use a `fit_jax`
+   point estimate as `init_to_value` for the SVI guide. Should give
+   tighter posterior around the data-fitted basin. Not a blocker —
+   prior median already works.
 
 ## Quick resume commands
 

@@ -196,6 +196,35 @@ def test_bayes_tbats_runs():
     assert np.all(np.isfinite(preds))
 
 
+def test_svi_tbats_runs():
+    """SVI Bayesian TBATS smoke check: short SVI run + posterior forecast.
+    SVI dodges the NUTS step-size collapse since it optimizes an ELBO
+    rather than maintaining Hamiltonian energy conservation.
+    """
+    pytest = __import__("pytest")
+    try:
+        import numpyro  # noqa: F401
+    except ImportError:
+        pytest.skip("numpyro not installed")
+    from tbats_jax import svi_tbats, bayes_forecast
+
+    spec = TBATSSpec(seasonal=((12.0, 2),), use_trend=True, use_damping=False)
+    rng = np.random.default_rng(101)
+    t = np.arange(150)
+    y = 3.0 + 0.01 * t + 1.0 * np.sin(2 * np.pi * t / 12.0) + rng.normal(0, 0.3, 150)
+    # Short SVI run — fast end-to-end check.
+    res = svi_tbats(y, spec, num_steps=300, num_posterior_samples=80)
+    assert "alpha" in res.samples
+    assert res.samples["alpha"].shape == (80,)
+    assert res.samples["sigma"].shape == (80,)
+    assert res.samples["x0_rest"].shape == (80, spec.state_dim - 1)
+    assert np.all(np.isfinite(res.samples["alpha"]))
+    # Posterior-predictive forecast through the same path as NUTS results.
+    preds = bayes_forecast(res, y, horizon=12, n_paths=20)
+    assert preds.shape == (20, 12)
+    assert np.all(np.isfinite(preds))
+
+
 def test_fit_lm_converges():
     """LM (scan-based) should converge to a reasonable fit — better than
     fit_scan because it uses the least-squares structure directly."""

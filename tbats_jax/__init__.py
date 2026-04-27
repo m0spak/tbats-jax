@@ -10,13 +10,11 @@ from tbats_jax.auto import auto_fit_jax, auto_fit_jax_cv, AutoResult, AutoCVResu
 # `import tbats_jax` doesn't fail when numpyro isn't installed.
 
 
-def _lazy_bayes_import():
-    from tbats_jax.bayesian import bayes_tbats, bayes_forecast, BayesResult
-    return bayes_tbats, bayes_forecast, BayesResult
+_BAYES_NAMES = ("bayes_tbats", "svi_tbats", "bayes_forecast", "BayesResult")
 
 
 def __getattr__(name):
-    if name in ("bayes_tbats", "bayes_forecast", "BayesResult"):
+    if name in _BAYES_NAMES:
         import importlib
         mod = importlib.import_module("tbats_jax.bayesian")
         return getattr(mod, name)
@@ -40,6 +38,7 @@ __all__ = [
     "AutoResult",
     "AutoCVResult",
     "bayes_tbats",
+    "svi_tbats",
     "bayes_forecast",
     "BayesResult",
     "forecast",

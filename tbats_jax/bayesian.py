@@ -1,22 +1,26 @@
-"""Bayesian TBATS via NumPyro (EXPERIMENTAL — NUTS converges poorly).
+"""Bayesian TBATS via NumPyro.
 
-Wraps the existing innovations-form kernel in a NumPyro model. The scaffold
-works end-to-end: prior predictive, likelihood, posterior-predictive
-forecast shapes are all correct. **However NUTS step-size adaptation
-collapses to ~1e-45** when the chain brushes the log-hinge admissibility
-barrier (which has infinite curvature at rho=1). As a result, posterior
-samples on non-trivial problems are often stuck at a single point.
+Two inference paths over the same `make_tbats_model`:
 
-This is a known-hard pattern in HMC: log-barriers create posterior geometry
-that Hamiltonian samplers can't navigate without reparameterization. Clean
-fixes (not shipped here, each multi-day):
+  - `svi_tbats(...)` — variational inference, RECOMMENDED for real problems.
+    Optimizes an ELBO; the log-hinge admissibility barrier creates a steep
+    penalty but the gradient-based optimizer can approach the boundary
+    without diverging. Returns approximate Gaussian posterior. Fast (seconds)
+    and reliable.
 
-  1. Structural admissibility constraint — parameterize gammas so
-     rho(D) < 1 is guaranteed at all samples, remove the barrier entirely.
-  2. Non-centered reparameterization — lift correlated params to
-     independent standard-normal auxiliaries.
-  3. Dense mass-matrix adaptation with a longer warmup on the barrier.
-  4. Switch to SVI / Laplace approximation instead of NUTS.
+  - `bayes_tbats(...)` — NUTS sampling, EXPERIMENTAL. Works on small problems
+    where the chain stays well inside the admissible region. **NUTS
+    step-size adaptation collapses to ~1e-45** when the chain brushes the
+    log-hinge barrier (infinite curvature at rho=1, breaks leapfrog energy
+    conservation). On hard real problems samples can get stuck at a single
+    point. Use only when you know the posterior is well-separated from the
+    barrier, or rerun with very tight priors.
+
+Both expose the same `BayesResult` dataclass; `bayes_forecast(...)` works
+on either result. SVI's posterior is forced into the variational family
+(mean-field by default, full-rank optional via `guide_type='multivariate'`)
+so tails are approximate — but "approximate posterior that exists"
+> "exact posterior we can't sample".
 
 Current priors (deliberately tight, chosen to stay away from the barrier):
   - alpha         ~ Normal(0.1, 0.15)
@@ -184,6 +188,97 @@ def bayes_tbats(
         samples=samples,
         num_samples=num_samples,
         num_chains=num_chains,
+        wall_time=wall,
+        spec=spec,
+    )
+
+
+def svi_tbats(
+    y,
+    spec: TBATSSpec,
+    num_steps: int = 2000,
+    learning_rate: float = 1e-2,
+    guide_type: str = "normal",
+    num_posterior_samples: int = 500,
+    seed: int = 0,
+    admissibility_weight: float = 1.0,
+    admissibility_margin: float = 1e-4,
+) -> "BayesResult":
+    """Variational Bayesian TBATS: SVI on the same model as `bayes_tbats`.
+
+    Bypasses the NUTS step-size collapse by optimizing an ELBO instead of
+    sampling. The log-hinge admissibility barrier creates a steep penalty
+    in the loss landscape but the optimizer can get arbitrarily close to
+    the boundary without diverging — gradient-based methods don't suffer
+    the same energy-conservation pathology that breaks Hamiltonian samplers.
+
+    Trade-off vs NUTS:
+      - Posterior is a Gaussian (mean-field if guide_type='normal',
+        full-rank if 'multivariate'). Tail behavior is approximate.
+      - Optimization is deterministic given seed; converges in seconds
+        rather than minutes.
+
+    Returns the same `BayesResult` dataclass as `bayes_tbats`, with
+    `samples` populated by drawing from the variational posterior. So
+    `bayes_forecast(...)` works unchanged on the result.
+
+    `guide_type`:
+      - 'normal' (default): AutoNormal — mean-field, fastest, factorized
+        Gaussian. Good for a first run; under-estimates correlated tails.
+      - 'multivariate': AutoMultivariateNormal — full-rank Gaussian, more
+        accurate, more memory and slower.
+    """
+    import time
+    import numpyro
+    from numpyro.infer import SVI, Trace_ELBO
+    from numpyro.infer.autoguide import (
+        AutoNormal, AutoMultivariateNormal, init_to_median,
+    )
+
+    y_arr = jnp.asarray(np.asarray(y, dtype=np.float64))
+
+    model = make_tbats_model(
+        spec,
+        admissibility_weight=admissibility_weight,
+        admissibility_margin=admissibility_margin,
+    )
+
+    # init_loc_fn is critical: NumPyro's default `init_to_uniform` samples
+    # from a small box around 0, which lands the latent state in regions
+    # where rho(D) > 1 — the forward scan then diverges (residuals 1e80+,
+    # ELBO 1e150) and Adam can't escape. `init_to_median` uses the prior
+    # median: priors here are deliberately tight around admissible region,
+    # so this is a safe starting point. Validated empirically on a
+    # T=500 dual-seasonal problem: ELBO converges to ~2e4 instead of stalling.
+    init_fn = init_to_median()
+
+    if guide_type == "normal":
+        guide = AutoNormal(model, init_loc_fn=init_fn)
+    elif guide_type == "multivariate":
+        guide = AutoMultivariateNormal(model, init_loc_fn=init_fn)
+    else:
+        raise ValueError(
+            f"guide_type must be 'normal' or 'multivariate', got {guide_type!r}"
+        )
+
+    optimizer = numpyro.optim.Adam(step_size=learning_rate)
+    svi = SVI(model, guide, optimizer, loss=Trace_ELBO())
+
+    rng = jax.random.PRNGKey(seed)
+    rng_run, rng_sample = jax.random.split(rng)
+
+    t0 = time.perf_counter()
+    svi_result = svi.run(rng_run, num_steps, y=y_arr, progress_bar=False)
+    posterior = guide.sample_posterior(
+        rng_sample, svi_result.params, sample_shape=(num_posterior_samples,)
+    )
+    wall = time.perf_counter() - t0
+
+    samples = {k: np.asarray(v) for k, v in posterior.items()}
+    return BayesResult(
+        samples=samples,
+        num_samples=num_posterior_samples,
+        num_chains=1,
         wall_time=wall,
         spec=spec,
     )
