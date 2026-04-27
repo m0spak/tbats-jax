@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "tbats-jax"
-version = "0.1.0"
+version = "0.1.1"
 description = "JAX-native TBATS (forecast::tbats port) — multi-seasonal forecasting with vmap panels on CPU/GPU"
 readme = "README.md"
 license = { file = "LICENSE" }
