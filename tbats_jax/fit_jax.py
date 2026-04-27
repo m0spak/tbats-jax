@@ -4,6 +4,7 @@ Entry point: fit_jax(y, spec, ...) -> FitResultJax
 Batched:     fit_panel(ys, spec, ...) -> arrays of thetas / NLLs over a panel
 """
 
+import functools
 import time
 from dataclasses import dataclass
 from typing import Optional, Tuple
@@ -32,27 +33,41 @@ class FitResultJax:
     spec: TBATSSpec
 
 
-def _build_loss(spec: TBATSSpec, y,
-                admissibility_weight: float = 1.0,
-                admissibility_margin: float = 1e-4,
-                gamma_ridge: float = 1e6,
-                has_missing: bool = False):
-    """Return a pure scalar loss function loss(theta_raw, args) suitable for
-    optimistix.minimise. Works on untransformed `theta_raw` in R^n.
-    """
-    y_j = jnp.asarray(y)
+@functools.lru_cache(maxsize=64)
+def _build_single_fit(
+    spec: TBATSSpec,
+    max_steps: int,
+    rtol: float,
+    atol: float,
+    admissibility_weight: float,
+    admissibility_margin: float,
+    gamma_ridge: float,
+    has_missing: bool,
+):
+    # Cache the jitted single-series fit so repeat fit_jax calls with the
+    # same hyperparameters (different y values, same shape) reuse the same
+    # XLA program. y is passed as `args` to the loss rather than captured,
+    # so different inputs of the same shape hit the JAX trace cache.
+    solver = optx.BFGS(rtol=rtol, atol=atol)
 
-    def loss(theta_raw, args):
+    def loss(theta_raw, y):
         theta = raw_to_natural(theta_raw, spec)
         return penalized_objective(
-            y_j, theta, spec,
+            y, theta, spec,
             admissibility_weight=admissibility_weight,
             admissibility_margin=admissibility_margin,
             gamma_ridge=gamma_ridge,
             has_missing=has_missing,
         )
 
-    return loss
+    @jax.jit
+    def run(theta_raw_init, y):
+        return optx.minimise(
+            loss, solver, theta_raw_init,
+            args=y, max_steps=max_steps, throw=False,
+        )
+
+    return loss, run
 
 
 def fit_jax(
@@ -77,33 +92,28 @@ def fit_jax(
     theta_raw0 = natural_to_raw(theta0, spec)
 
     has_missing = bool(np.isnan(y_np).any())
-    loss = _build_loss(spec, y_np,
-                       admissibility_weight=admissibility_weight,
-                       admissibility_margin=admissibility_margin,
-                       gamma_ridge=gamma_ridge,
-                       has_missing=has_missing)
-    solver = optx.BFGS(rtol=rtol, atol=atol)
+    loss, run = _build_single_fit(
+        spec, max_steps, rtol, atol,
+        admissibility_weight, admissibility_margin, gamma_ridge,
+        has_missing,
+    )
 
-    @jax.jit
-    def run(theta_raw_init):
-        return optx.minimise(
-            loss, solver, theta_raw_init,
-            max_steps=max_steps, throw=False,
-        )
+    y_j = jnp.asarray(y_np)
+    theta_raw_j = jnp.asarray(theta_raw0)
 
     t0 = time.perf_counter()
-    sol = run(jnp.asarray(theta_raw0))
+    sol = run(theta_raw_j, y_j)
     jax.block_until_ready(sol.value)
     compile_time = time.perf_counter() - t0
 
     t0 = time.perf_counter()
-    sol = run(jnp.asarray(theta_raw0))
+    sol = run(theta_raw_j, y_j)
     jax.block_until_ready(sol.value)
     wall_time = time.perf_counter() - t0
 
     theta_raw = np.asarray(sol.value)
     theta = np.asarray(raw_to_natural(jnp.asarray(theta_raw), spec))
-    pen_obj = float(loss(jnp.asarray(theta_raw), None))
+    pen_obj = float(loss(jnp.asarray(theta_raw), y_j))
     nll_clean = float(neg_log_likelihood(jnp.asarray(y_np), jnp.asarray(theta), spec,
                                           has_missing=has_missing))
 
@@ -178,6 +188,43 @@ def fit_panel_hetero(
     return [out_by_idx[i] for i in range(n)]
 
 
+@functools.lru_cache(maxsize=64)
+def _build_panel_fit(
+    spec: TBATSSpec,
+    max_steps: int,
+    rtol: float,
+    atol: float,
+    admissibility_weight: float,
+    admissibility_margin: float,
+    gamma_ridge: float,
+    panel_has_missing: bool,
+):
+    # Cache by full hyperparameter signature so repeat fit_panel calls reuse
+    # the same jit object. Without this, a fresh closure was built each call
+    # and JAX's compile cache missed even when shapes were identical.
+    solver = optx.BFGS(rtol=rtol, atol=atol)
+
+    def loss_one(theta_raw, args):
+        y_i = args
+        theta = raw_to_natural(theta_raw, spec)
+        return penalized_objective(
+            y_i, theta, spec,
+            admissibility_weight=admissibility_weight,
+            admissibility_margin=admissibility_margin,
+            gamma_ridge=gamma_ridge,
+            has_missing=panel_has_missing,
+        )
+
+    def fit_one(theta_raw_init, y_i):
+        sol = optx.minimise(
+            loss_one, solver, theta_raw_init,
+            args=y_i, max_steps=max_steps, throw=False,
+        )
+        return sol.value, loss_one(sol.value, y_i)
+
+    return jax.jit(jax.vmap(fit_one, in_axes=(0, 0)))
+
+
 def fit_panel(
     ys: np.ndarray,
     spec: TBATSSpec,
@@ -208,32 +255,16 @@ def fit_panel(
         theta_raw_stack = np.broadcast_to(theta_raw0, (N, len(theta_raw0))).copy()
     raw_stack = jnp.asarray(theta_raw_stack)
 
-    solver = optx.BFGS(rtol=rtol, atol=atol)
-
     # For a batched panel, treat as potentially missing if ANY series has
     # NaN — same scan graph is used for all rows. Avoids mixing graphs per
     # row while still handling padding from fit_panel_hetero.
     panel_has_missing = bool(np.isnan(ys).any())
 
-    def loss_one(theta_raw, args):
-        y_i = args
-        theta = raw_to_natural(theta_raw, spec)
-        return penalized_objective(
-            y_i, theta, spec,
-            admissibility_weight=admissibility_weight,
-            admissibility_margin=admissibility_margin,
-            gamma_ridge=gamma_ridge,
-            has_missing=panel_has_missing,
-        )
-
-    def fit_one(theta_raw_init, y_i):
-        sol = optx.minimise(
-            loss_one, solver, theta_raw_init,
-            args=y_i, max_steps=max_steps, throw=False,
-        )
-        return sol.value, loss_one(sol.value, y_i)
-
-    batched = jax.jit(jax.vmap(fit_one, in_axes=(0, 0)))
+    batched = _build_panel_fit(
+        spec, max_steps, rtol, atol,
+        admissibility_weight, admissibility_margin, gamma_ridge,
+        panel_has_missing,
+    )
 
     y_j = jnp.asarray(ys)
     t0 = time.perf_counter()

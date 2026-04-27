@@ -32,6 +32,7 @@ import jax.numpy as jnp
 import pytest
 
 from tbats_jax import TBATSSpec, fit, fit_jax, fit_panel, forecast
+from tbats_jax.fit_jax import _build_panel_fit, _build_single_fit
 from tbats_jax.kernel import neg_log_likelihood
 from tbats_jax.transforms import raw_to_natural
 
@@ -141,3 +142,64 @@ def test_taylor_regression_guard():
     pred = np.asarray(forecast(y_tr, jnp.asarray(r.theta), spec, h))
     mae = float(np.mean(np.abs(y_te - pred)))
     assert mae < 1100, f"Taylor MAE regression: {mae:.1f} (budget 1100)"
+
+
+def test_fit_panel_jit_cache_hit():
+    """Repeated fit_panel calls with the same spec/shape must reuse the
+    cached jit object. Pre-fix, every call rebuilt its closure → JAX cache
+    missed → compile_time stayed flat across calls. After the
+    `_build_panel_fit` lru_cache lift, the second call's `compile_time`
+    should drop sharply.
+    """
+    _build_panel_fit.cache_clear()
+    spec = TBATSSpec(seasonal=((7.0, 3),), use_trend=True)
+    rng = np.random.default_rng(0)
+    panel = np.stack([rng.normal(size=400) for _ in range(3)], axis=0)
+
+    _, _, ct1, _ = fit_panel(panel, spec, max_steps=50)
+    _, _, ct2, _ = fit_panel(panel, spec, max_steps=50)
+
+    assert ct2 < ct1 / 3, (
+        f"jit cache miss on second call: ct1={ct1:.3f}s ct2={ct2:.3f}s "
+        f"(expected ct2 < ct1/3)"
+    )
+
+
+def test_fit_jax_jit_cache_hit():
+    """Repeated fit_jax calls with the same spec/length must reuse the
+    cached jit object. Companion guard to test_fit_panel_jit_cache_hit:
+    the single-series path lifts y out of the closure into args so different
+    series of the same length hit the cache.
+    """
+    _build_single_fit.cache_clear()
+    spec = TBATSSpec(seasonal=((7.0, 3),), use_trend=True)
+    rng = np.random.default_rng(0)
+    y1 = rng.normal(size=400)
+    y2 = rng.normal(size=400)   # different data, same shape
+
+    r1 = fit_jax(y1, spec, max_steps=50)
+    r2 = fit_jax(y2, spec, max_steps=50)
+
+    assert r2.compile_time < r1.compile_time / 3, (
+        f"jit cache miss on second fit_jax: "
+        f"ct1={r1.compile_time:.3f}s ct2={r2.compile_time:.3f}s "
+        f"(expected ct2 < ct1/3)"
+    )
+
+
+def test_fit_jax_numerical_equivalence_after_cache_lift():
+    """Pin numerical behavior: lifting y from closure to args must not
+    change fit results meaningfully. Compares two fits on the same y/spec —
+    a near-tautology, but it pins float bit-pattern stability through the
+    refactor and catches any unexpected nondeterminism.
+    """
+    spec = TBATSSpec(seasonal=((7.0, 3),), use_trend=True)
+    rng = np.random.default_rng(42)
+    y = rng.normal(size=400)
+
+    r_a = fit_jax(y, spec, max_steps=100)
+    r_b = fit_jax(y, spec, max_steps=100)
+
+    assert np.allclose(r_a.theta, r_b.theta, atol=1e-12), \
+        f"non-determinism in fit_jax: max diff = {np.max(np.abs(r_a.theta - r_b.theta))}"
+    assert abs(r_a.neg_log_lik_clean - r_b.neg_log_lik_clean) < 1e-10
